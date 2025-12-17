@@ -1,0 +1,101 @@
+name: Build Signed APK
+
+# 这个工作流用于构建签名的 APK
+# 需要在 GitHub Secrets 中配置以下密钥:
+# - KEYSTORE_FILE: Base64 编码的 keystore 文件
+# - KEYSTORE_PASSWORD: Keystore 密码
+# - KEY_ALIAS: Key 别名
+# - KEY_PASSWORD: Key 密码
+
+on:
+  workflow_dispatch:
+    inputs:
+      buildType:
+        description: 'Build type (debug/release)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - debug
+          - release
+
+jobs:
+  build-signed:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+        
+    - name: Decode Keystore
+      if: ${{ secrets.KEYSTORE_FILE != '' }}
+      run: |
+        echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > keystore.jks
+        
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+      
+    - name: Build Signed APK
+      if: ${{ secrets.KEYSTORE_FILE != '' }}
+      run: |
+        ./gradlew assemble${{ github.event.inputs.buildType || 'release' }} \
+          -Pandroid.injected.signing.store.file=$PWD/keystore.jks \
+          -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
+          -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
+          -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }} \
+          --stacktrace
+          
+    - name: Build Unsigned APK (fallback)
+      if: ${{ secrets.KEYSTORE_FILE == '' }}
+      run: |
+        echo "⚠️ No keystore configured, building unsigned APK"
+        ./gradlew assemble${{ github.event.inputs.buildType || 'release' }} --stacktrace
+        
+    - name: Get version info
+      id: version
+      run: |
+        VERSION_NAME=$(grep "versionName" app/build.gradle.kts | awk -F'"' '{print $2}')
+        VERSION_CODE=$(grep "versionCode" app/build.gradle.kts | awk -F'= ' '{print $2}' | head -1)
+        BUILD_TYPE=${{ github.event.inputs.buildType || 'release' }}
+        echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_OUTPUT
+        echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_OUTPUT
+        echo "BUILD_TYPE=${BUILD_TYPE}" >> $GITHUB_OUTPUT
+        
+    - name: Rename and collect APK
+      run: |
+        mkdir -p signed
+        BUILD_TYPE=${{ steps.version.outputs.BUILD_TYPE }}
+        APK_PATH=app/build/outputs/apk/${BUILD_TYPE}/*.apk
+        cp $APK_PATH signed/NekoSMS-v${{ steps.version.outputs.VERSION_NAME }}-${BUILD_TYPE}-signed.apk
+        
+    - name: Generate Checksums
+      run: |
+        cd signed
+        sha256sum *.apk > checksums.txt
+        cat checksums.txt
+        
+    - name: Verify APK signature
+      if: ${{ secrets.KEYSTORE_FILE != '' }}
+      run: |
+        echo "### APK Signature Info:" >> $GITHUB_STEP_SUMMARY
+        $ANDROID_HOME/build-tools/*/apksigner verify --print-certs signed/*.apk >> $GITHUB_STEP_SUMMARY || true
+        
+    - name: Upload Signed APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: nekosms-signed-${{ steps.version.outputs.VERSION_NAME }}-${{ steps.version.outputs.BUILD_TYPE }}
+        path: signed/*
+        retention-days: 90
+        
+    - name: Clean up
+      if: always()
+      run: |
+        rm -f keystore.jks
+

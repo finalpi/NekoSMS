@@ -1,0 +1,59 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+        
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+      
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug --stacktrace
+      
+    - name: Build Release APK
+      run: ./gradlew assembleRelease --stacktrace
+      
+    - name: Upload Debug APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: nekosms-debug-${{ github.sha }}
+        path: app/build/outputs/apk/debug/*.apk
+        retention-days: 30
+        
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: nekosms-release-${{ github.sha }}
+        path: app/build/outputs/apk/release/*.apk
+        retention-days: 30
+        
+    - name: Get APK Info
+      if: success()
+      run: |
+        echo "### Build Success! 🎉" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### APK Files:" >> $GITHUB_STEP_SUMMARY
+        echo "Debug APK:" >> $GITHUB_STEP_SUMMARY
+        ls -lh app/build/outputs/apk/debug/*.apk >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Release APK:" >> $GITHUB_STEP_SUMMARY
+        ls -lh app/build/outputs/apk/release/*.apk >> $GITHUB_STEP_SUMMARY
+

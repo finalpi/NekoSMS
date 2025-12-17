@@ -328,6 +328,44 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
             new ConstructorHook());
     }
 
+    private void hookConstructor36(XC_LoadPackage.LoadPackageParam lpparam) {
+        Xlog.i("Hooking InboundSmsHandler constructor for Android v36+ (Android 16)");
+        // Try different possible constructor signatures for Android 16
+        try {
+            // Try without storageMonitor parameter (might have been removed)
+            XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
+                /*                 name */ String.class,
+                /*              context */ Context.class,
+                /*                phone */ TELEPHONY_PACKAGE + ".Phone",
+                /*               looper */ Looper.class,
+                new ConstructorHook());
+            Xlog.i("Successfully hooked constructor variant 1 (without storageMonitor)");
+        } catch (NoSuchMethodError e1) {
+            try {
+                // Try with only context and looper
+                XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
+                    /*                 name */ String.class,
+                    /*              context */ Context.class,
+                    /*               looper */ Looper.class,
+                    new ConstructorHook());
+                Xlog.i("Successfully hooked constructor variant 2 (context and looper only)");
+            } catch (NoSuchMethodError e2) {
+                try {
+                    // Try with context only
+                    XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
+                        /*                 name */ String.class,
+                        /*              context */ Context.class,
+                        new ConstructorHook());
+                    Xlog.i("Successfully hooked constructor variant 3 (context only)");
+                } catch (NoSuchMethodError e3) {
+                    // If all attempts fail, fall back to Android 34 constructor
+                    Xlog.w("All Android 16 constructor variants failed, falling back to Android 34 constructor");
+                    hookConstructor34(lpparam);
+                }
+            }
+        }
+    }
+
     private void hookDispatchIntent19(XC_LoadPackage.LoadPackageParam lpparam) {
         Xlog.i("Hooking dispatchIntent() for Android v19+");
         XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
@@ -400,8 +438,50 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
                 new DispatchIntentHook(4));
     }
 
+    private void hookDispatchIntent36(XC_LoadPackage.LoadPackageParam lpparam) {
+        Xlog.i("Hooking dispatchIntent() for Android v36+ (Android 16)");
+        // Try the same signature as Android 31 first
+        try {
+            XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
+                    /*         intent */ Intent.class,
+                    /*     permission */ String.class,
+                    /*          appOp */ String.class,
+                    /*           opts */ Bundle.class,
+                    /* resultReceiver */ SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
+                    /*           user */ UserHandle.class,
+                    /*          subId */ int.class,
+                    new DispatchIntentHook(4));
+            Xlog.i("Successfully hooked dispatchIntent variant 1 (same as v31)");
+        } catch (NoSuchMethodError e1) {
+            // Try without UserHandle parameter
+            try {
+                XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
+                        /*         intent */ Intent.class,
+                        /*     permission */ String.class,
+                        /*          appOp */ String.class,
+                        /*           opts */ Bundle.class,
+                        /* resultReceiver */ SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
+                        /*          subId */ int.class,
+                        new DispatchIntentHook(4));
+                Xlog.i("Successfully hooked dispatchIntent variant 2 (without UserHandle)");
+            } catch (NoSuchMethodError e2) {
+                // If all attempts fail, fall back to Android 31 hook
+                Xlog.w("All Android 16 dispatchIntent variants failed, falling back to Android 31 method");
+                throw e1;
+            }
+        }
+    }
+
     private void hookConstructor(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        // Android 16 is API level 36 (constant may not be available yet)
+        if (Build.VERSION.SDK_INT >= 36) {
+            try {
+                hookConstructor36(lpparam);
+            } catch (Throwable e) {
+                Xlog.w("Android 16 constructor hook failed, trying fallback to Android 34", e);
+                hookConstructor34(lpparam);
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             hookConstructor34(lpparam);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             hookConstructor30(lpparam);
@@ -413,7 +493,15 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
     }
 
     private void hookDispatchIntent(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        // Android 16 is API level 36 (constant may not be available yet)
+        if (Build.VERSION.SDK_INT >= 36) {
+            try {
+                hookDispatchIntent36(lpparam);
+            } catch (NoSuchMethodError e) {
+                Xlog.w("Android 16 dispatchIntent hook failed, trying fallback to Android 31", e);
+                hookDispatchIntent31(lpparam);
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             hookDispatchIntent31(lpparam);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             hookDispatchIntent30(lpparam);

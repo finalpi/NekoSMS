@@ -1,0 +1,78 @@
+name: Release APK
+
+on:
+  release:
+    types: [created, published]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+        
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+      
+    - name: Build Release APK
+      run: ./gradlew assembleRelease --stacktrace
+      
+    - name: Get version info
+      id: version
+      run: |
+        VERSION_NAME=$(grep "versionName" app/build.gradle.kts | awk -F'"' '{print $2}')
+        VERSION_CODE=$(grep "versionCode" app/build.gradle.kts | awk -F'= ' '{print $2}' | head -1)
+        echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_OUTPUT
+        echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_OUTPUT
+        echo "Building version: ${VERSION_NAME} (${VERSION_CODE})"
+        
+    - name: Rename APK
+      run: |
+        mkdir -p release
+        cp app/build/outputs/apk/release/*.apk release/NekoSMS-v${{ steps.version.outputs.VERSION_NAME }}-release.apk
+        
+    - name: Generate Checksums
+      run: |
+        cd release
+        sha256sum *.apk > checksums.txt
+        cat checksums.txt
+        
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: nekosms-release-${{ steps.version.outputs.VERSION_NAME }}
+        path: release/*
+        retention-days: 90
+        
+    - name: Upload to Release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          release/*.apk
+          release/checksums.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Summary
+      if: success()
+      run: |
+        echo "### Release Build Success! 🚀" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ steps.version.outputs.VERSION_NAME }} (Build ${{ steps.version.outputs.VERSION_CODE }})" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### Files:" >> $GITHUB_STEP_SUMMARY
+        ls -lh release/ >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### Checksums:" >> $GITHUB_STEP_SUMMARY
+        cat release/checksums.txt >> $GITHUB_STEP_SUMMARY
+
