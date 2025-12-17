@@ -34,8 +34,19 @@ jobs:
         distribution: 'temurin'
         cache: gradle
         
+    - name: Check if keystore is configured
+      id: check_keystore
+      run: |
+        if [ -n "${{ secrets.KEYSTORE_FILE }}" ]; then
+          echo "configured=true" >> $GITHUB_OUTPUT
+          echo "✅ Keystore is configured"
+        else
+          echo "configured=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Keystore is not configured, will build unsigned APK"
+        fi
+        
     - name: Decode Keystore
-      if: ${{ secrets.KEYSTORE_FILE != '' }}
+      if: steps.check_keystore.outputs.configured == 'true'
       run: |
         echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > keystore.jks
         
@@ -43,7 +54,7 @@ jobs:
       run: chmod +x gradlew
       
     - name: Build Signed APK
-      if: ${{ secrets.KEYSTORE_FILE != '' }}
+      if: steps.check_keystore.outputs.configured == 'true'
       run: |
         ./gradlew assemble${{ github.event.inputs.buildType || 'release' }} \
           -Pandroid.injected.signing.store.file=$PWD/keystore.jks \
@@ -53,7 +64,7 @@ jobs:
           --stacktrace
           
     - name: Build Unsigned APK (fallback)
-      if: ${{ secrets.KEYSTORE_FILE == '' }}
+      if: steps.check_keystore.outputs.configured == 'false'
       run: |
         echo "⚠️ No keystore configured, building unsigned APK"
         ./gradlew assemble${{ github.event.inputs.buildType || 'release' }} --stacktrace
@@ -82,7 +93,7 @@ jobs:
         cat checksums.txt
         
     - name: Verify APK signature
-      if: ${{ secrets.KEYSTORE_FILE != '' }}
+      if: steps.check_keystore.outputs.configured == 'true'
       run: |
         echo "### APK Signature Info:" >> $GITHUB_STEP_SUMMARY
         $ANDROID_HOME/build-tools/*/apksigner verify --print-certs signed/*.apk >> $GITHUB_STEP_SUMMARY || true
