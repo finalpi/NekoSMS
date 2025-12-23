@@ -71,6 +71,8 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
     private static final String NEKOSMS_PACKAGE = BuildConfig.APPLICATION_ID;
     private static final String TELEPHONY_PACKAGE = "com.android.internal.telephony";
     private static final String SMS_HANDLER_CLASS = TELEPHONY_PACKAGE + ".InboundSmsHandler";
+    private static final String HIDDEN_FEATURE_FLAGS_CLASS = "com.android.internal.hidden_from_bootclasspath.com.android.internal.telephony.flags.FeatureFlags";
+    private static final String FEATURE_FLAGS_CLASS = TELEPHONY_PACKAGE + ".flags.FeatureFlags";
     private static final int MARK_DELETED = 2;
     private static final int EVENT_BROADCAST_COMPLETE = 3;
 
@@ -330,40 +332,82 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
 
     private void hookConstructor36(XC_LoadPackage.LoadPackageParam lpparam) {
         Xlog.i("Hooking InboundSmsHandler constructor for Android v36+ (Android 16)");
-        // Try different possible constructor signatures for Android 16
+        
+        // Try to find FeatureFlags class
+        Class<?> featureFlagsClass = null;
+        String[] featureFlagsClassNames = { HIDDEN_FEATURE_FLAGS_CLASS, FEATURE_FLAGS_CLASS };
+        for (String className : featureFlagsClassNames) {
+            featureFlagsClass = XposedHelpers.findClassIfExists(className, lpparam.classLoader);
+            if (featureFlagsClass != null) {
+                Xlog.i("Found FeatureFlags class: %s", className);
+                break;
+            }
+            Xlog.w("FeatureFlags class not found at %s, trying next", className);
+        }
+        
+        // Variant 1: Android 36 constructor with FeatureFlags (most likely for Android 16)
+        if (featureFlagsClass != null) {
+            try {
+                XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
+                    /*                 name */ String.class,
+                    /*              context */ Context.class,
+                    /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+                    /*                phone */ TELEPHONY_PACKAGE + ".Phone",
+                    /*               looper */ Looper.class,
+                    /*         featureFlags */ featureFlagsClass,
+                    new ConstructorHook());
+                Xlog.i("Successfully hooked Android 16 constructor with FeatureFlags");
+                return;
+            } catch (NoSuchMethodError e) {
+                Xlog.w("Android 16 constructor with FeatureFlags failed: " + e.getMessage());
+            }
+        }
+        
+        // Variant 2: Try without FeatureFlags but with all other params (fallback to Android 34)
         try {
-            // Try without storageMonitor parameter (might have been removed)
+            XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
+                /*                 name */ String.class,
+                /*              context */ Context.class,
+                /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+                /*                phone */ TELEPHONY_PACKAGE + ".Phone",
+                /*               looper */ Looper.class,
+                new ConstructorHook());
+            Xlog.i("Successfully hooked Android 34 constructor (without FeatureFlags)");
+            return;
+        } catch (NoSuchMethodError e) {
+            Xlog.w("Android 34 constructor failed: " + e.getMessage());
+        }
+        
+        // Variant 3: Try without storageMonitor parameter (might have been removed)
+        try {
             XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
                 /*                 name */ String.class,
                 /*              context */ Context.class,
                 /*                phone */ TELEPHONY_PACKAGE + ".Phone",
                 /*               looper */ Looper.class,
                 new ConstructorHook());
-            Xlog.i("Successfully hooked constructor variant 1 (without storageMonitor)");
-        } catch (NoSuchMethodError e1) {
-            try {
-                // Try with only context and looper
-                XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-                    /*                 name */ String.class,
-                    /*              context */ Context.class,
-                    /*               looper */ Looper.class,
-                    new ConstructorHook());
-                Xlog.i("Successfully hooked constructor variant 2 (context and looper only)");
-            } catch (NoSuchMethodError e2) {
-                try {
-                    // Try with context only
-                    XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-                        /*                 name */ String.class,
-                        /*              context */ Context.class,
-                        new ConstructorHook());
-                    Xlog.i("Successfully hooked constructor variant 3 (context only)");
-                } catch (NoSuchMethodError e3) {
-                    // If all attempts fail, fall back to Android 34 constructor
-                    Xlog.w("All Android 16 constructor variants failed, falling back to Android 34 constructor");
-                    hookConstructor34(lpparam);
-                }
-            }
+            Xlog.i("Successfully hooked constructor variant 3 (no storageMonitor)");
+            return;
+        } catch (NoSuchMethodError e) {
+            Xlog.w("Variant 3 failed: " + e.getMessage());
         }
+        
+        // Variant 4: Try with only context and looper
+        try {
+            XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
+                /*                 name */ String.class,
+                /*              context */ Context.class,
+                /*               looper */ Looper.class,
+                new ConstructorHook());
+            Xlog.i("Successfully hooked constructor variant 4 (context and looper only)");
+            return;
+        } catch (NoSuchMethodError e) {
+            Xlog.w("Variant 4 failed: " + e.getMessage());
+        }
+        
+        // If all attempts fail, log error and throw exception
+        Xlog.e("All Android 16 constructor variants failed. Cannot hook InboundSmsHandler.");
+        throw new RuntimeException("Failed to hook InboundSmsHandler constructor for Android 16");
     }
 
     private void hookDispatchIntent19(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -475,12 +519,7 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
     private void hookConstructor(XC_LoadPackage.LoadPackageParam lpparam) {
         // Android 16 is API level 36 (constant may not be available yet)
         if (Build.VERSION.SDK_INT >= 36) {
-            try {
-                hookConstructor36(lpparam);
-            } catch (Throwable e) {
-                Xlog.w("Android 16 constructor hook failed, trying fallback to Android 34", e);
-                hookConstructor34(lpparam);
-            }
+            hookConstructor36(lpparam);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             hookConstructor34(lpparam);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -528,17 +567,34 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
         hookDispatchIntent(lpparam);
     }
 
+    private static String getConstructorSignature(java.lang.reflect.Constructor<?> constructor) {
+        StringBuilder signature = new StringBuilder(constructor.getDeclaringClass().getSimpleName() + "(");
+        Class<?>[] parameterTypes = constructor.getParameterTypes();
+        for (int i = 0; i < parameterTypes.length; i++) {
+            signature.append(parameterTypes[i].getName());
+            if (i < parameterTypes.length - 1) {
+                signature.append(", ");
+            }
+        }
+        signature.append(")");
+        return signature.toString();
+    }
+
     private static void printDeviceInfo(XC_LoadPackage.LoadPackageParam lpparam) {
         Xlog.i("Phone manufacturer: %s", Build.MANUFACTURER);
         Xlog.i("Phone model: %s", Build.MODEL);
-        Xlog.i("Android version: %s", Build.VERSION.RELEASE);
+        Xlog.i("Android version: %s (API %d)", Build.VERSION.RELEASE, Build.VERSION.SDK_INT);
         Xlog.i("Xposed bridge version: %d", XposedBridge.XPOSED_BRIDGE_VERSION);
         Xlog.i("NekoSMS version: %s (%d)", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
         try {
             Class<?> cls = XposedHelpers.findClass(SMS_HANDLER_CLASS, lpparam.classLoader);
-            Xlog.i("SMS handler class signature:\n%s", ReflectionUtils.dumpClass(cls));
+            java.lang.reflect.Constructor<?>[] constructors = cls.getDeclaredConstructors();
+            Xlog.i("Found %d constructors for %s:", constructors.length, SMS_HANDLER_CLASS);
+            for (java.lang.reflect.Constructor<?> constructor : constructors) {
+                Xlog.i("  %s", getConstructorSignature(constructor));
+            }
         } catch (Exception e) {
-            Xlog.e("Failed to dump SMS handler class", e);
+            Xlog.e("Failed to dump SMS handler constructors", e);
         }
     }
 
