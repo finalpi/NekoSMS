@@ -7,8 +7,21 @@ public final class Xlog {
     private static final String LOG_TAG = BuildConfig.LOG_TAG;
     private static final int LOG_LEVEL = BuildConfig.LOG_LEVEL;
     private static final boolean LOG_TO_XPOSED = BuildConfig.LOG_TO_XPOSED;
+    private static Boolean sXposedAvailable = null;
 
     private Xlog() { }
+
+    private static boolean isXposedAvailable() {
+        if (sXposedAvailable == null) {
+            try {
+                Class.forName("de.robv.android.xposed.XposedBridge");
+                sXposedAvailable = true;
+            } catch (ClassNotFoundException e) {
+                sXposedAvailable = false;
+            }
+        }
+        return sXposedAvailable;
+    }
 
     private static void log(int priority, String message, Object... args) {
         if (priority < LOG_LEVEL) {
@@ -31,8 +44,8 @@ public final class Xlog {
         // Write to the default log tag
         Log.println(priority, LOG_TAG, message);
 
-        // Duplicate to the Xposed log if enabled
-        if (LOG_TO_XPOSED) {
+        // Duplicate to the Xposed log if enabled and available
+        if (LOG_TO_XPOSED && isXposedAvailable()) {
             Log.println(priority, "Xposed", LOG_TAG + ": " + message);
         }
     }
