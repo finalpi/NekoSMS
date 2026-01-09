@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <androidx.preference.PreferenceCategory
+        android:title="@string/pref_cleanup"
+        app:iconSpaceReserved="false">
+        <androidx.preference.SwitchPreferenceCompat
+            android:key="pref_cleanup_enable"
+            android:title="@string/pref_cleanup_enable"
+            android:summary="@string/pref_cleanup_enable_summary"
+            android:defaultValue="false"
+            android:widgetLayout="@layout/material_switch"
+            app:iconSpaceReserved="false"/>
+        <androidx.preference.EditTextPreference
+            android:key="pref_cleanup_days"
+            android:title="@string/pref_cleanup_days"
+            android:summary="@string/pref_cleanup_days_summary"
+            android:defaultValue="7"
+            android:inputType="number"
+            android:dependency="pref_cleanup_enable"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true"/>
+    </androidx.preference.PreferenceCategory>
+</androidx.preference.PreferenceScreen>
+

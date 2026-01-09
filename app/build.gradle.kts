@@ -22,8 +22,8 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        versionCode = 43
-        versionName = "0.23.0-dev"
+        versionCode = 44
+        versionName = "0.24.0-dev"
         minSdk = 19
         targetSdk = 34
         resourceConfigurations.addAll(listOf("en", "zh-rCN", "ru"))

@@ -124,4 +124,21 @@ public class BlockedSmsLoader extends AutoContentLoader<SmsMessageData> {
         values.put(BlockedMessages.SEEN, 1);
         updateAll(context, values, BlockedMessages.SEEN + "=?", new String[] {"0"});
     }
+
+    /**
+     * Delete old messages that exceed the specified number of days
+     * @param context Context
+     * @param days Number of days threshold, messages older than this will be deleted
+     * @return Number of messages deleted
+     */
+    public int deleteOldMessages(Context context, int days) {
+        if (days <= 0) {
+            return 0;
+        }
+        // Calculate time threshold: current time minus specified days
+        long thresholdTime = System.currentTimeMillis() - (days * 24L * 60L * 60L * 1000L);
+        String where = BlockedMessages.TIME_RECEIVED + "<?";
+        String[] whereArgs = new String[] { String.valueOf(thresholdTime) };
+        return deleteAll(context, where, whereArgs);
+    }
 }

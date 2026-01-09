@@ -34,6 +34,11 @@ public final class PreferenceConsts {
     public static final String KEY_ABOUT_GITHUB = "pref_about_github";
     public static final String KEY_ABOUT_VERSION = "pref_about_version";
 
+    public static final String KEY_CLEANUP_ENABLE = "pref_cleanup_enable";
+    public static final boolean KEY_CLEANUP_ENABLE_DEFAULT = false;
+    public static final String KEY_CLEANUP_DAYS = "pref_cleanup_days";
+    public static final String KEY_CLEANUP_DAYS_DEFAULT = "7";
+
     public static final String KEY_APP_VERSION = "pref_app_version";
     public static final String KEY_SELECTED_SECTION = "pref_selected_section";
 
