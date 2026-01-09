@@ -84,6 +84,9 @@ public class SettingsFragment extends PreferenceFragmentCompat implements OnNewA
             return true;
         });
 
+        // Cleanup
+        addPreferencesFromResource(R.xml.settings_cleanup);
+
         // About
         addPreferencesFromResource(R.xml.settings_about);
         requirePreference(PreferenceConsts.KEY_ABOUT_HELP).setOnPreferenceClickListener(preference -> {

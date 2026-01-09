@@ -11,6 +11,8 @@ import com.crossbowffs.nekosms.data.SmsMessageData;
 import com.crossbowffs.nekosms.loader.BlockedSmsLoader;
 import com.crossbowffs.nekosms.loader.DatabaseException;
 import com.crossbowffs.nekosms.loader.InboxSmsLoader;
+import com.crossbowffs.nekosms.utils.AsyncUtils;
+import com.crossbowffs.nekosms.utils.MessageCleanupHelper;
 import com.crossbowffs.nekosms.utils.Xlog;
 
 public class BlockedSmsReceiver extends BroadcastReceiver {
@@ -21,6 +23,17 @@ public class BlockedSmsReceiver extends BroadcastReceiver {
         }
 
         NotificationHelper.displayNotification(context, messageUri);
+
+        // Perform auto cleanup in background thread
+        AsyncUtils.run(
+            () -> {
+                MessageCleanupHelper.performAutoCleanup(context);
+                return null;
+            },
+            (result) -> {
+                // Cleanup completed, no additional action needed
+            }
+        );
     }
 
     private void onDeleteSms(Context context, Intent intent) {

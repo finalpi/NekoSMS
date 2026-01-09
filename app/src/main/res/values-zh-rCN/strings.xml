@@ -142,6 +142,13 @@
     <string name="pref_export_backup">导出备份</string>
     <string name="pref_export_backup_summary">将过滤规则保存到.nsbak文件</string>
 
+    <!-- Settings/Cleanup -->
+    <string name="pref_cleanup">自动清理</string>
+    <string name="pref_cleanup_enable">启用自动清理</string>
+    <string name="pref_cleanup_enable_summary">自动删除旧的被拦截信息</string>
+    <string name="pref_cleanup_days">清理天数</string>
+    <string name="pref_cleanup_days_summary">超过此天数的信息将被删除</string>
+
     <!-- Settings/About -->
     <string name="pref_about">关于</string>
     <string name="pref_about_help">帮助</string>

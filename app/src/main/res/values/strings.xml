@@ -143,6 +143,13 @@
     <string name="pref_export_backup">Export backup</string>
     <string name="pref_export_backup_summary">Save filter rules to .nsbak file</string>
 
+    <!-- Settings/Cleanup -->
+    <string name="pref_cleanup">Auto cleanup</string>
+    <string name="pref_cleanup_enable">Enable auto cleanup</string>
+    <string name="pref_cleanup_enable_summary">Automatically delete old blocked messages</string>
+    <string name="pref_cleanup_days">Cleanup after (days)</string>
+    <string name="pref_cleanup_days_summary">Messages older than this will be deleted</string>
+
     <!-- Settings/About -->
     <string name="pref_about">About</string>
     <string name="pref_about_help">Help</string>
