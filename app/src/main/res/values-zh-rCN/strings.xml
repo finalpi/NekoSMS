@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NekoSMS</string>
+    <string name="module_description">适用于 Android 4.4+ 的基于模式的短信拦截器</string>
 
     <!-- General -->
     <string name="ok">确定</string>

@@ -14,6 +14,7 @@ import android.os.Looper;
 import android.os.UserHandle;
 import android.provider.Telephony;
 import android.telephony.SubscriptionManager;
+
 import com.crossbowffs.nekosms.BuildConfig;
 import com.crossbowffs.nekosms.consts.BroadcastConsts;
 import com.crossbowffs.nekosms.consts.PreferenceConsts;
@@ -29,80 +30,94 @@ import com.crossbowffs.nekosms.utils.Xlog;
 import com.crossbowffs.remotepreferences.RemotePreferenceAccessException;
 import com.crossbowffs.remotepreferences.RemotePreferences;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import io.github.libxposed.api.XposedInterface;
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface;
 
-public class SmsHandlerHook implements IXposedHookLoadPackage {
-    private class ConstructorHook extends XC_MethodHook {
-        @Override
-        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-            try {
-                afterConstructorHandler(param);
-            } catch (Throwable e) {
-                Xlog.e("Error occurred in constructor hook", e);
-                throw e;
-            }
-        }
-    }
-
-    private class DispatchIntentHook extends XC_MethodHook {
-        private final int mReceiverIndex;
-
-        public DispatchIntentHook(int receiverIndex) {
-            mReceiverIndex = receiverIndex;
-        }
-
-        @Override
-        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-            try {
-                beforeDispatchIntentHandler(param, mReceiverIndex);
-            } catch (Throwable e) {
-                Xlog.e("Error occurred in dispatchIntent() hook", e);
-                throw e;
-            }
-        }
-    }
-
+public class SmsHandlerHook {
     private static final String NEKOSMS_PACKAGE = BuildConfig.APPLICATION_ID;
     private static final String TELEPHONY_PACKAGE = "com.android.internal.telephony";
     private static final String SMS_HANDLER_CLASS = TELEPHONY_PACKAGE + ".InboundSmsHandler";
-    private static final String HIDDEN_FEATURE_FLAGS_CLASS = "com.android.internal.hidden_from_bootclasspath.com.android.internal.telephony.flags.FeatureFlags";
+    private static final String HIDDEN_FEATURE_FLAGS_CLASS =
+        "com.android.internal.hidden_from_bootclasspath.com.android.internal.telephony.flags.FeatureFlags";
     private static final String FEATURE_FLAGS_CLASS = TELEPHONY_PACKAGE + ".flags.FeatureFlags";
     private static final int MARK_DELETED = 2;
     private static final int EVENT_BROADCAST_COMPLETE = 3;
+
+    private final XposedModule mModule;
 
     private Context mContext;
     private SmsFilterLoader mFilterLoader;
     private RemotePreferences mPreferences;
 
+    public SmsHandlerHook(XposedModule module) {
+        mModule = module;
+    }
+
+    private static Class<?> resolveClass(ClassLoader classLoader, Object type) {
+        if (type instanceof Class<?>) {
+            return (Class<?>)type;
+        }
+        if (type instanceof String) {
+            return ReflectionUtils.getClass(classLoader, (String)type);
+        }
+        throw new IllegalArgumentException("Unsupported parameter type " + type);
+    }
+
+    private static Constructor<?> getDeclaredConstructor(ClassLoader classLoader, Object... parameterTypes) {
+        Class<?> cls = ReflectionUtils.getClass(classLoader, SMS_HANDLER_CLASS);
+        Class<?>[] resolvedTypes = new Class<?>[parameterTypes.length];
+        for (int i = 0; i < parameterTypes.length; i++) {
+            resolvedTypes[i] = resolveClass(classLoader, parameterTypes[i]);
+        }
+        return ReflectionUtils.getDeclaredConstructor(cls, resolvedTypes);
+    }
+
+    private static Method getDeclaredMethod(ClassLoader classLoader, String methodName, Object... parameterTypes) {
+        Class<?> cls = ReflectionUtils.getClass(classLoader, SMS_HANDLER_CLASS);
+        Class<?>[] resolvedTypes = new Class<?>[parameterTypes.length];
+        for (int i = 0; i < parameterTypes.length; i++) {
+            resolvedTypes[i] = resolveClass(classLoader, parameterTypes[i]);
+        }
+        return ReflectionUtils.getDeclaredMethod(cls, methodName, resolvedTypes);
+    }
+
+    private static Object getObjectField(Object object, String fieldName) {
+        return ReflectionUtils.getFieldValue(
+            ReflectionUtils.getDeclaredFieldRecursive(object.getClass(), fieldName),
+            object);
+    }
+
     private static Object callDeclaredMethod(String clsName, Object obj, String methodName, Object... args) {
-        // Unlike Xposed's built-in callMethod, this one searches
-        // for private methods as well, in the specified class
-        // (which must be assignable from the object).
-        Class<?> cls = XposedHelpers.findClass(clsName, obj.getClass().getClassLoader());
-        Method method = XposedHelpers.findMethodBestMatch(cls, methodName, args);
+        Class<?> cls = ReflectionUtils.getClass(obj.getClass().getClassLoader(), clsName);
+        Method method = ReflectionUtils.findMethodBestMatch(cls, methodName, args);
         return ReflectionUtils.invoke(method, obj, args);
     }
 
+    private static Object callMethod(Object obj, String methodName, Object... args) {
+        Method method = ReflectionUtils.findMethodBestMatch(obj.getClass(), methodName, args);
+        return ReflectionUtils.invoke(method, obj, args);
+    }
+
+    private static Object callStaticMethod(Class<?> cls, String methodName, Object... args) {
+        Method method = ReflectionUtils.findMethodBestMatch(cls, methodName, args);
+        return ReflectionUtils.invoke(method, null, args);
+    }
+
+    public void hookPackage(XposedModuleInterface.PackageReadyParam param) {
+        printDeviceInfo(param);
+        hookSmsHandler(param.getClassLoader());
+    }
+
     private void grantWriteSmsPermissions(Context context) {
-        // We need to grant OP_WRITE_SMS permissions to the app
-        // (the non-Xposed part) so it can restore messages to the
-        // SMS inbox. We can do this from the com.android.phone
-        // process since it holds the UPDATE_APP_OPS_STATS
-        // permission.
         PackageManager packageManager = context.getPackageManager();
         PackageInfo packageInfo;
         try {
             packageInfo = packageManager.getPackageInfo(NEKOSMS_PACKAGE, 0);
         } catch (PackageManager.NameNotFoundException e) {
-            // This might occur if the app has been uninstalled.
-            // In this case, don't do anything - we can't do anything
-            // with the permissions anyways.
             Xlog.e("App package not found, ignoring", e);
             return;
         }
@@ -117,8 +132,6 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
                 AppOpsUtils.allowOp(context, AppOpsUtils.OP_WRITE_SMS, uid, NEKOSMS_PACKAGE);
             }
         } catch (Exception e) {
-            // This isn't a fatal error - the user just won't
-            // be able to restore messages to the inbox.
             Xlog.e("Failed to grant OP_WRITE_SMS permission", e);
         }
     }
@@ -126,16 +139,16 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
     private void deleteFromRawTable19(Object smsHandler, Object smsReceiver) {
         Xlog.i("Removing raw SMS data from database for Android v19+");
         callDeclaredMethod(SMS_HANDLER_CLASS, smsHandler, "deleteFromRawTable",
-            /*     deleteWhere */ XposedHelpers.getObjectField(smsReceiver, "mDeleteWhere"),
-            /* deleteWhereArgs */ XposedHelpers.getObjectField(smsReceiver, "mDeleteWhereArgs"));
+            getObjectField(smsReceiver, "mDeleteWhere"),
+            getObjectField(smsReceiver, "mDeleteWhereArgs"));
     }
 
     private void deleteFromRawTable24(Object smsHandler, Object smsReceiver) {
         Xlog.i("Removing raw SMS data from database for Android v24+");
         callDeclaredMethod(SMS_HANDLER_CLASS, smsHandler, "deleteFromRawTable",
-            /*     deleteWhere */ XposedHelpers.getObjectField(smsReceiver, "mDeleteWhere"),
-            /* deleteWhereArgs */ XposedHelpers.getObjectField(smsReceiver, "mDeleteWhereArgs"),
-            /*      deleteType */ MARK_DELETED);
+            getObjectField(smsReceiver, "mDeleteWhere"),
+            getObjectField(smsReceiver, "mDeleteWhereArgs"),
+            MARK_DELETED);
     }
 
     private void deleteFromRawTable(Object smsHandler, Object smsReceiver) {
@@ -148,14 +161,10 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
 
     private void sendBroadcastComplete(Object smsHandler) {
         Xlog.i("Notifying completion of SMS broadcast");
-        XposedHelpers.callMethod(smsHandler, "sendMessage",
-            /* what */ EVENT_BROADCAST_COMPLETE);
+        callMethod(smsHandler, "sendMessage", EVENT_BROADCAST_COMPLETE);
     }
 
     private void finishSmsBroadcast(Object smsHandler, Object smsReceiver) {
-        // Need to clear calling identity since dispatchIntent() might be
-        // called from CarrierSmsFilterCallback.onFilterComplete(), which is
-        // executing an IPC. This is required to write to the SMS database.
         long token = Binder.clearCallingIdentity();
         try {
             deleteFromRawTable(smsHandler, smsReceiver);
@@ -166,10 +175,6 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
     }
 
     private void broadcastBlockedSms(Uri messageUri) {
-        // Permissions are not required here since we are only
-        // broadcasting the URI of the message, not the message
-        // contents. The provider requires permissions to read
-        // the actual message contents.
         Intent intent = new Intent(BroadcastConsts.ACTION_RECEIVE_SMS);
         intent.setComponent(new ComponentName(NEKOSMS_PACKAGE, BroadcastConsts.RECEIVER_NAME));
         intent.putExtra(BroadcastConsts.EXTRA_MESSAGE, messageUri);
@@ -185,8 +190,18 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
         }
     }
 
-    private void afterConstructorHandler(XC_MethodHook.MethodHookParam param) {
-        Context context = (Context)param.args[1];
+    private Object interceptConstructor(XposedInterface.Chain chain) throws Throwable {
+        Object result = chain.proceed();
+        try {
+            afterConstructorHandler((Context)chain.getArg(1));
+        } catch (Throwable e) {
+            Xlog.e("Error occurred in constructor hook", e);
+            throw e;
+        }
+        return result;
+    }
+
+    private void afterConstructorHandler(Context context) {
         if (mContext == null) {
             mContext = context;
             mFilterLoader = new SmsFilterLoader(context);
@@ -201,9 +216,9 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
     private void putPhoneIdAndSubIdExtra(Object inboundSmsHandler, Intent intent) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             try {
-                Object phone = XposedHelpers.getObjectField(inboundSmsHandler, "mPhone");
-                int phoneId = (Integer)XposedHelpers.callMethod(phone, "getPhoneId");
-                XposedHelpers.callStaticMethod(SubscriptionManager.class, "putPhoneIdAndSubIdExtra", intent, phoneId);
+                Object phone = getObjectField(inboundSmsHandler, "mPhone");
+                int phoneId = (Integer)callMethod(phone, "getPhoneId");
+                callStaticMethod(SubscriptionManager.class, "putPhoneIdAndSubIdExtra", intent, phoneId);
             } catch (Exception e) {
                 Xlog.e("Failed to call putPhoneIdAndSubIdExtra", e);
             }
@@ -213,8 +228,8 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
     private void putSubscriptionIdExtraIfValid(Intent intent, int subId) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
-                if ((boolean)XposedHelpers.callStaticMethod(SubscriptionManager.class, "isValidSubscriptionId", subId)) {
-                    XposedHelpers.callStaticMethod(SubscriptionManager.class, "putSubscriptionIdExtra", intent, subId);
+                if ((boolean)callStaticMethod(SubscriptionManager.class, "isValidSubscriptionId", subId)) {
+                    callStaticMethod(SubscriptionManager.class, "putSubscriptionIdExtra", intent, subId);
                 }
             } catch (Exception e) {
                 Xlog.e("Failed to call putSubscriptionIdExtra", e);
@@ -222,31 +237,33 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
         }
     }
 
-    private void beforeDispatchIntentHandler(XC_MethodHook.MethodHookParam param, int receiverIndex) {
-        Intent intent = (Intent)param.args[0];
+    private Object interceptDispatchIntent(XposedInterface.Chain chain, int receiverIndex) throws Throwable {
+        try {
+            return beforeDispatchIntentHandler(chain, receiverIndex);
+        } catch (Throwable e) {
+            Xlog.e("Error occurred in dispatchIntent() hook", e);
+            throw e;
+        }
+    }
+
+    private Object beforeDispatchIntentHandler(XposedInterface.Chain chain, int receiverIndex) throws Throwable {
+        Intent intent = (Intent)chain.getArg(0);
         String action = intent.getAction();
 
-        // We only care about the initial SMS_DELIVER intent,
-        // the rest are irrelevant
         if (!Telephony.Sms.Intents.SMS_DELIVER_ACTION.equals(action)) {
-            return;
+            return chain.proceed();
         }
 
-        // Skip everything if the global killswitch is toggled
         if (!getBooleanPref(PreferenceConsts.KEY_ENABLE, PreferenceConsts.KEY_ENABLE_DEFAULT)) {
             Xlog.i("SMS blocking disabled, exiting");
-            return;
+            return chain.proceed();
         }
 
-        // Copy original dispatchIntent behavior to set the subscription id,
-        // so that we can read it within getMessageFromIntent (technically
-        // this is not necessary; we could also just pass the subId value
-        // directly as an argument)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            putPhoneIdAndSubIdExtra(param.thisObject, intent);
+            putPhoneIdAndSubIdExtra(chain.getThisObject(), intent);
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            putSubscriptionIdExtraIfValid(intent, (int)param.args[6]);
+            putSubscriptionIdExtraIfValid(intent, (Integer)chain.getArg(6));
         }
 
         SmsMessageData message = SmsMessageUtils.getMessageFromIntent(intent);
@@ -261,313 +278,291 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
             Xlog.v("Body: %s", StringUtils.escape(body));
         }
 
-        // Skip if "whitelist contacts" is enabled and the message
-        // is from a contact (this is done in the module so we don't
-        // need contact permissions on the app itself).
         boolean allowContacts = getBooleanPref(
             PreferenceConsts.KEY_WHITELIST_CONTACTS,
             PreferenceConsts.KEY_WHITELIST_CONTACTS_DEFAULT);
         if (allowContacts && ContactUtils.isContact(mContext, sender)) {
             Xlog.i("Allowing message (contact whitelist)");
-            return;
+            return chain.proceed();
         }
 
         if (!mFilterLoader.shouldBlockMessage(sender, body)) {
-            return;
+            return chain.proceed();
         }
 
-        // Order is important here! First, save a copy of the message to
-        // the blocked message list and notify everyone about it. THEN,
-        // we can delete the original. If it were the other way around,
-        // any bug in our code would cause the message to disappear. This
-        // way, the worst that can happen is that the user gets two copies.
         Uri messageUri = BlockedSmsLoader.get().insert(mContext, message);
         broadcastBlockedSms(messageUri);
-        finishSmsBroadcast(param.thisObject, param.args[receiverIndex]);
-        param.setResult(null);
+        finishSmsBroadcast(chain.getThisObject(), chain.getArg(receiverIndex));
+        return null;
     }
 
-    private void hookConstructor19(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookConstructor19(ClassLoader classLoader) {
         Xlog.i("Hooking InboundSmsHandler constructor for Android v19+");
-        XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-            /*                 name */ String.class,
-            /*              context */ Context.class,
-            /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
-            /*                phone */ TELEPHONY_PACKAGE + ".PhoneBase",
-            /* cellBroadcastHandler */ TELEPHONY_PACKAGE + ".CellBroadcastHandler",
-            new ConstructorHook());
+        mModule.hook(getDeclaredConstructor(classLoader,
+            String.class,
+            Context.class,
+            TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+            TELEPHONY_PACKAGE + ".PhoneBase",
+            TELEPHONY_PACKAGE + ".CellBroadcastHandler"))
+            .intercept(this::interceptConstructor);
     }
 
-    private void hookConstructor24(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookConstructor24(ClassLoader classLoader) {
         Xlog.i("Hooking InboundSmsHandler constructor for Android v24+");
-        XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-            /*                 name */ String.class,
-            /*              context */ Context.class,
-            /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
-            /*                phone */ TELEPHONY_PACKAGE + ".Phone",
-            /* cellBroadcastHandler */ TELEPHONY_PACKAGE + ".CellBroadcastHandler",
-            new ConstructorHook());
+        mModule.hook(getDeclaredConstructor(classLoader,
+            String.class,
+            Context.class,
+            TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+            TELEPHONY_PACKAGE + ".Phone",
+            TELEPHONY_PACKAGE + ".CellBroadcastHandler"))
+            .intercept(this::interceptConstructor);
     }
 
-    private void hookConstructor30(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookConstructor30(ClassLoader classLoader) {
         Xlog.i("Hooking InboundSmsHandler constructor for Android v30+");
-        XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-            /*                 name */ String.class,
-            /*              context */ Context.class,
-            /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
-            /*                phone */ TELEPHONY_PACKAGE + ".Phone",
-            new ConstructorHook());
+        mModule.hook(getDeclaredConstructor(classLoader,
+            String.class,
+            Context.class,
+            TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+            TELEPHONY_PACKAGE + ".Phone"))
+            .intercept(this::interceptConstructor);
     }
 
-    private void hookConstructor34(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookConstructor34(ClassLoader classLoader) {
         Xlog.i("Hooking InboundSmsHandler constructor for Android v34+");
-        XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-            /*                 name */ String.class,
-            /*              context */ Context.class,
-            /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
-            /*                phone */ TELEPHONY_PACKAGE + ".Phone",
-            /*               looper */ Looper.class,
-            new ConstructorHook());
+        mModule.hook(getDeclaredConstructor(classLoader,
+            String.class,
+            Context.class,
+            TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+            TELEPHONY_PACKAGE + ".Phone",
+            Looper.class))
+            .intercept(this::interceptConstructor);
     }
 
-    private void hookConstructor36(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookConstructor36(ClassLoader classLoader) {
         Xlog.i("Hooking InboundSmsHandler constructor for Android v36+ (Android 16)");
-        
-        // Try to find FeatureFlags class
+
         Class<?> featureFlagsClass = null;
         String[] featureFlagsClassNames = { HIDDEN_FEATURE_FLAGS_CLASS, FEATURE_FLAGS_CLASS };
         for (String className : featureFlagsClassNames) {
-            featureFlagsClass = XposedHelpers.findClassIfExists(className, lpparam.classLoader);
+            featureFlagsClass = ReflectionUtils.getClassIfExists(classLoader, className);
             if (featureFlagsClass != null) {
                 Xlog.i("Found FeatureFlags class: %s", className);
                 break;
             }
             Xlog.w("FeatureFlags class not found at %s, trying next", className);
         }
-        
-        // Variant 1: Android 36 constructor with FeatureFlags (most likely for Android 16)
+
         if (featureFlagsClass != null) {
             try {
-                XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-                    /*                 name */ String.class,
-                    /*              context */ Context.class,
-                    /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
-                    /*                phone */ TELEPHONY_PACKAGE + ".Phone",
-                    /*               looper */ Looper.class,
-                    /*         featureFlags */ featureFlagsClass,
-                    new ConstructorHook());
+                mModule.hook(getDeclaredConstructor(classLoader,
+                    String.class,
+                    Context.class,
+                    TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+                    TELEPHONY_PACKAGE + ".Phone",
+                    Looper.class,
+                    featureFlagsClass))
+                    .intercept(this::interceptConstructor);
                 Xlog.i("Successfully hooked Android 16 constructor with FeatureFlags");
                 return;
-            } catch (NoSuchMethodError e) {
-                Xlog.w("Android 16 constructor with FeatureFlags failed: " + e.getMessage());
+            } catch (RuntimeException e) {
+                Xlog.w("Android 16 constructor with FeatureFlags failed: %s", e.getMessage());
             }
         }
-        
-        // Variant 2: Try without FeatureFlags but with all other params (fallback to Android 34)
+
         try {
-            XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-                /*                 name */ String.class,
-                /*              context */ Context.class,
-                /*       storageMonitor */ TELEPHONY_PACKAGE + ".SmsStorageMonitor",
-                /*                phone */ TELEPHONY_PACKAGE + ".Phone",
-                /*               looper */ Looper.class,
-                new ConstructorHook());
+            mModule.hook(getDeclaredConstructor(classLoader,
+                String.class,
+                Context.class,
+                TELEPHONY_PACKAGE + ".SmsStorageMonitor",
+                TELEPHONY_PACKAGE + ".Phone",
+                Looper.class))
+                .intercept(this::interceptConstructor);
             Xlog.i("Successfully hooked Android 34 constructor (without FeatureFlags)");
             return;
-        } catch (NoSuchMethodError e) {
-            Xlog.w("Android 34 constructor failed: " + e.getMessage());
+        } catch (RuntimeException e) {
+            Xlog.w("Android 34 constructor failed: %s", e.getMessage());
         }
-        
-        // Variant 3: Try without storageMonitor parameter (might have been removed)
+
         try {
-            XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-                /*                 name */ String.class,
-                /*              context */ Context.class,
-                /*                phone */ TELEPHONY_PACKAGE + ".Phone",
-                /*               looper */ Looper.class,
-                new ConstructorHook());
+            mModule.hook(getDeclaredConstructor(classLoader,
+                String.class,
+                Context.class,
+                TELEPHONY_PACKAGE + ".Phone",
+                Looper.class))
+                .intercept(this::interceptConstructor);
             Xlog.i("Successfully hooked constructor variant 3 (no storageMonitor)");
             return;
-        } catch (NoSuchMethodError e) {
-            Xlog.w("Variant 3 failed: " + e.getMessage());
+        } catch (RuntimeException e) {
+            Xlog.w("Variant 3 failed: %s", e.getMessage());
         }
-        
-        // Variant 4: Try with only context and looper
+
         try {
-            XposedHelpers.findAndHookConstructor(SMS_HANDLER_CLASS, lpparam.classLoader,
-                /*                 name */ String.class,
-                /*              context */ Context.class,
-                /*               looper */ Looper.class,
-                new ConstructorHook());
+            mModule.hook(getDeclaredConstructor(classLoader,
+                String.class,
+                Context.class,
+                Looper.class))
+                .intercept(this::interceptConstructor);
             Xlog.i("Successfully hooked constructor variant 4 (context and looper only)");
             return;
-        } catch (NoSuchMethodError e) {
-            Xlog.w("Variant 4 failed: " + e.getMessage());
+        } catch (RuntimeException e) {
+            Xlog.w("Variant 4 failed: %s", e.getMessage());
         }
-        
-        // If all attempts fail, log error and throw exception
+
         Xlog.e("All Android 16 constructor variants failed. Cannot hook InboundSmsHandler.");
         throw new RuntimeException("Failed to hook InboundSmsHandler constructor for Android 16");
     }
 
-    private void hookDispatchIntent19(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookDispatchIntent19(ClassLoader classLoader) {
         Xlog.i("Hooking dispatchIntent() for Android v19+");
-        XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-            /*         intent */ Intent.class,
-            /*     permission */ String.class,
-            /*          appOp */ int.class,
-            /* resultReceiver */ BroadcastReceiver.class,
-            new DispatchIntentHook(3));
+        mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+            Intent.class,
+            String.class,
+            int.class,
+            BroadcastReceiver.class))
+            .intercept(chain -> interceptDispatchIntent(chain, 3));
     }
 
-    private void hookDispatchIntent21(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookDispatchIntent21(ClassLoader classLoader) {
         Xlog.i("Hooking dispatchIntent() for Android v21+");
-        XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-            /*         intent */ Intent.class,
-            /*     permission */ String.class,
-            /*          appOp */ int.class,
-            /* resultReceiver */ BroadcastReceiver.class,
-            /*           user */ UserHandle.class,
-            new DispatchIntentHook(3));
+        mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+            Intent.class,
+            String.class,
+            int.class,
+            BroadcastReceiver.class,
+            UserHandle.class))
+            .intercept(chain -> interceptDispatchIntent(chain, 3));
     }
 
-    private void hookDispatchIntent23(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookDispatchIntent23(ClassLoader classLoader) {
         Xlog.i("Hooking dispatchIntent() for Android v23+");
-        XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-            /*         intent */ Intent.class,
-            /*     permission */ String.class,
-            /*          appOp */ int.class,
-            /*           opts */ Bundle.class,
-            /* resultReceiver */ BroadcastReceiver.class,
-            /*           user */ UserHandle.class,
-            new DispatchIntentHook(4));
+        mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+            Intent.class,
+            String.class,
+            int.class,
+            Bundle.class,
+            BroadcastReceiver.class,
+            UserHandle.class))
+            .intercept(chain -> interceptDispatchIntent(chain, 4));
     }
 
-    private void hookDispatchIntent29(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookDispatchIntent29(ClassLoader classLoader) {
         Xlog.i("Hooking dispatchIntent() for Android v29+");
-        XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-            /*         intent */ Intent.class,
-            /*     permission */ String.class,
-            /*          appOp */ int.class,
-            /*           opts */ Bundle.class,
-            /* resultReceiver */ BroadcastReceiver.class,
-            /*           user */ UserHandle.class,
-            /*          subId */ int.class,
-            new DispatchIntentHook(4));
+        mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+            Intent.class,
+            String.class,
+            int.class,
+            Bundle.class,
+            BroadcastReceiver.class,
+            UserHandle.class,
+            int.class))
+            .intercept(chain -> interceptDispatchIntent(chain, 4));
     }
 
-    private void hookDispatchIntent30(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookDispatchIntent30(ClassLoader classLoader) {
         Xlog.i("Hooking dispatchIntent() for Android v30+");
-        XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-            /*         intent */ Intent.class,
-            /*     permission */ String.class,
-            /*          appOp */ String.class,
-            /*           opts */ Bundle.class,
-            /* resultReceiver */ BroadcastReceiver.class,
-            /*           user */ UserHandle.class,
-            /*          subId */ int.class,
-            new DispatchIntentHook(4));
+        mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+            Intent.class,
+            String.class,
+            String.class,
+            Bundle.class,
+            BroadcastReceiver.class,
+            UserHandle.class,
+            int.class))
+            .intercept(chain -> interceptDispatchIntent(chain, 4));
     }
 
-    private void hookDispatchIntent31(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookDispatchIntent31(ClassLoader classLoader) {
         Xlog.i("Hooking dispatchIntent() for Android v31+");
-        XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-                /*         intent */ Intent.class,
-                /*     permission */ String.class,
-                /*          appOp */ String.class,
-                /*           opts */ Bundle.class,
-                /* resultReceiver */ SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
-                /*           user */ UserHandle.class,
-                /*          subId */ int.class,
-                new DispatchIntentHook(4));
+        mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+            Intent.class,
+            String.class,
+            String.class,
+            Bundle.class,
+            SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
+            UserHandle.class,
+            int.class))
+            .intercept(chain -> interceptDispatchIntent(chain, 4));
     }
 
-    private void hookDispatchIntent36(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookDispatchIntent36(ClassLoader classLoader) {
         Xlog.i("Hooking dispatchIntent() for Android v36+ (Android 16)");
-        // Try the same signature as Android 31 first
         try {
-            XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-                    /*         intent */ Intent.class,
-                    /*     permission */ String.class,
-                    /*          appOp */ String.class,
-                    /*           opts */ Bundle.class,
-                    /* resultReceiver */ SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
-                    /*           user */ UserHandle.class,
-                    /*          subId */ int.class,
-                    new DispatchIntentHook(4));
+            mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+                Intent.class,
+                String.class,
+                String.class,
+                Bundle.class,
+                SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
+                UserHandle.class,
+                int.class))
+                .intercept(chain -> interceptDispatchIntent(chain, 4));
             Xlog.i("Successfully hooked dispatchIntent variant 1 (same as v31)");
-        } catch (NoSuchMethodError e1) {
-            // Try without UserHandle parameter
+        } catch (RuntimeException e1) {
             try {
-                XposedHelpers.findAndHookMethod(SMS_HANDLER_CLASS, lpparam.classLoader, "dispatchIntent",
-                        /*         intent */ Intent.class,
-                        /*     permission */ String.class,
-                        /*          appOp */ String.class,
-                        /*           opts */ Bundle.class,
-                        /* resultReceiver */ SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
-                        /*          subId */ int.class,
-                        new DispatchIntentHook(4));
+                mModule.hook(getDeclaredMethod(classLoader, "dispatchIntent",
+                    Intent.class,
+                    String.class,
+                    String.class,
+                    Bundle.class,
+                    SMS_HANDLER_CLASS + "$SmsBroadcastReceiver",
+                    int.class))
+                    .intercept(chain -> interceptDispatchIntent(chain, 4));
                 Xlog.i("Successfully hooked dispatchIntent variant 2 (without UserHandle)");
-            } catch (NoSuchMethodError e2) {
-                // If all attempts fail, fall back to Android 31 hook
+            } catch (RuntimeException e2) {
                 Xlog.w("All Android 16 dispatchIntent variants failed, falling back to Android 31 method");
                 throw e1;
             }
         }
     }
 
-    private void hookConstructor(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Android 16 is API level 36 (constant may not be available yet)
+    private void hookConstructor(ClassLoader classLoader) {
         if (Build.VERSION.SDK_INT >= 36) {
-            hookConstructor36(lpparam);
+            hookConstructor36(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            hookConstructor34(lpparam);
+            hookConstructor34(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            hookConstructor30(lpparam);
+            hookConstructor30(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            hookConstructor24(lpparam);
+            hookConstructor24(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            hookConstructor19(lpparam);
+            hookConstructor19(classLoader);
         }
     }
 
-    private void hookDispatchIntent(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Android 16 is API level 36 (constant may not be available yet)
+    private void hookDispatchIntent(ClassLoader classLoader) {
         if (Build.VERSION.SDK_INT >= 36) {
             try {
-                hookDispatchIntent36(lpparam);
-            } catch (NoSuchMethodError e) {
+                hookDispatchIntent36(classLoader);
+            } catch (RuntimeException e) {
                 Xlog.w("Android 16 dispatchIntent hook failed, trying fallback to Android 31", e);
-                hookDispatchIntent31(lpparam);
+                hookDispatchIntent31(classLoader);
             }
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            hookDispatchIntent31(lpparam);
+            hookDispatchIntent31(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            hookDispatchIntent30(lpparam);
+            hookDispatchIntent30(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
-                hookDispatchIntent29(lpparam);
-            } catch (NoSuchMethodError e) {
-                // Just in case. I have reason to suspect that the function signature
-                // changed in a minor patch, so fall back to the old version if possible.
-                // See commit 6939834098aaf8126da4832453ebf64a85a898a6.
-                hookDispatchIntent23(lpparam);
+                hookDispatchIntent29(classLoader);
+            } catch (RuntimeException e) {
+                hookDispatchIntent23(classLoader);
             }
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            hookDispatchIntent23(lpparam);
+            hookDispatchIntent23(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            hookDispatchIntent21(lpparam);
+            hookDispatchIntent21(classLoader);
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            hookDispatchIntent19(lpparam);
+            hookDispatchIntent19(classLoader);
         }
     }
 
-    private void hookSmsHandler(XC_LoadPackage.LoadPackageParam lpparam) {
-        hookConstructor(lpparam);
-        hookDispatchIntent(lpparam);
+    private void hookSmsHandler(ClassLoader classLoader) {
+        hookConstructor(classLoader);
+        hookDispatchIntent(classLoader);
     }
 
-    private static String getConstructorSignature(java.lang.reflect.Constructor<?> constructor) {
+    private static String getConstructorSignature(Constructor<?> constructor) {
         StringBuilder signature = new StringBuilder(constructor.getDeclaringClass().getSimpleName() + "(");
         Class<?>[] parameterTypes = constructor.getParameterTypes();
         for (int i = 0; i < parameterTypes.length; i++) {
@@ -580,36 +575,21 @@ public class SmsHandlerHook implements IXposedHookLoadPackage {
         return signature.toString();
     }
 
-    private static void printDeviceInfo(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void printDeviceInfo(XposedModuleInterface.PackageReadyParam param) {
         Xlog.i("Phone manufacturer: %s", Build.MANUFACTURER);
         Xlog.i("Phone model: %s", Build.MODEL);
         Xlog.i("Android version: %s (API %d)", Build.VERSION.RELEASE, Build.VERSION.SDK_INT);
-        Xlog.i("Xposed bridge version: %d", XposedBridge.XPOSED_BRIDGE_VERSION);
+        Xlog.i("Xposed framework version: %d", mModule.getFrameworkVersionCode());
         Xlog.i("NekoSMS version: %s (%d)", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
         try {
-            Class<?> cls = XposedHelpers.findClass(SMS_HANDLER_CLASS, lpparam.classLoader);
-            java.lang.reflect.Constructor<?>[] constructors = cls.getDeclaredConstructors();
+            Class<?> cls = ReflectionUtils.getClass(param.getClassLoader(), SMS_HANDLER_CLASS);
+            Constructor<?>[] constructors = cls.getDeclaredConstructors();
             Xlog.i("Found %d constructors for %s:", constructors.length, SMS_HANDLER_CLASS);
-            for (java.lang.reflect.Constructor<?> constructor : constructors) {
+            for (Constructor<?> constructor : constructors) {
                 Xlog.i("  %s", getConstructorSignature(constructor));
             }
         } catch (Exception e) {
             Xlog.e("Failed to dump SMS handler constructors", e);
-        }
-    }
-
-    @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        if ("com.android.phone".equals(lpparam.packageName)) {
-            Xlog.i("NekoSMS initializing...");
-            printDeviceInfo(lpparam);
-            try {
-                hookSmsHandler(lpparam);
-            } catch (Throwable e) {
-                Xlog.e("Failed to hook SMS handler", e);
-                throw e;
-            }
-            Xlog.i("NekoSMS initialization complete!");
         }
     }
 }

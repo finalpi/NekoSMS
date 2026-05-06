@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NekoSMS</string>
+    <string name="module_description">A pattern-based text message blocker for Android 4.4+</string>
 
     <!-- General -->
     <string name="ok">OK</string>

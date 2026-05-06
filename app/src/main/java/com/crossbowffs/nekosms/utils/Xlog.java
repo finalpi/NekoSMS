@@ -4,23 +4,19 @@ import android.util.Log;
 import com.crossbowffs.nekosms.BuildConfig;
 
 public final class Xlog {
+    public interface FrameworkLogger {
+        void log(int priority, String tag, String message, Throwable throwable);
+    }
+
     private static final String LOG_TAG = BuildConfig.LOG_TAG;
     private static final int LOG_LEVEL = BuildConfig.LOG_LEVEL;
     private static final boolean LOG_TO_XPOSED = BuildConfig.LOG_TO_XPOSED;
-    private static Boolean sXposedAvailable = null;
+    private static volatile FrameworkLogger sFrameworkLogger = null;
 
     private Xlog() { }
 
-    private static boolean isXposedAvailable() {
-        if (sXposedAvailable == null) {
-            try {
-                Class.forName("de.robv.android.xposed.XposedBridge");
-                sXposedAvailable = true;
-            } catch (ClassNotFoundException e) {
-                sXposedAvailable = false;
-            }
-        }
-        return sXposedAvailable;
+    public static void setFrameworkLogger(FrameworkLogger logger) {
+        sFrameworkLogger = logger;
     }
 
     private static void log(int priority, String message, Object... args) {
@@ -35,8 +31,9 @@ public final class Xlog {
         // If caller also passed a throwable as the last argument,
         // append its stacktrace to the message (yes I know this is
         // not safe, but there isn't a much better alternative)
+        Throwable throwable = null;
         if (args.length > 0 && args[args.length - 1] instanceof Throwable) {
-            Throwable throwable = (Throwable)args[args.length - 1];
+            throwable = (Throwable)args[args.length - 1];
             String stacktraceStr = Log.getStackTraceString(throwable);
             message += '\n' + stacktraceStr;
         }
@@ -44,9 +41,10 @@ public final class Xlog {
         // Write to the default log tag
         Log.println(priority, LOG_TAG, message);
 
-        // Duplicate to the Xposed log if enabled and available
-        if (LOG_TO_XPOSED && isXposedAvailable()) {
-            Log.println(priority, "Xposed", LOG_TAG + ": " + message);
+        // Duplicate to the framework log when running inside LibXposed.
+        FrameworkLogger frameworkLogger = sFrameworkLogger;
+        if (LOG_TO_XPOSED && frameworkLogger != null) {
+            frameworkLogger.log(priority, LOG_TAG, message, throwable);
         }
     }
 

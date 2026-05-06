@@ -13,10 +13,5 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-
-        // Xposed API repository
-        maven {
-            url = uri("https://api.xposed.info/")
-        }
     }
 }
