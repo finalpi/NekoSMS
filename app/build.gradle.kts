@@ -44,6 +44,7 @@ android {
         }
 
         getByName("release") {
+            signingConfig = signingConfigs.getByName("debug")
             postprocessing {
                 isRemoveUnusedCode = true
                 isRemoveUnusedResources = true
