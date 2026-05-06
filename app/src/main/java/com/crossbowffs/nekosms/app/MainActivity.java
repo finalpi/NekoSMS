@@ -11,6 +11,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
 import com.crossbowffs.nekosms.BuildConfig;
 import com.crossbowffs.nekosms.R;
@@ -52,12 +56,14 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
         setContentView(R.layout.activity_main);
         mAppBar = findViewById(R.id.appbar);
         mToolbar = findViewById(R.id.toolbar);
         mBottomNavBar = findViewById(R.id.bottom_nav);
         mFloatingActionButton = findViewById(R.id.main_fab);
         setSupportActionBar(mToolbar);
+        applyWindowInsets();
 
         // HACK: Fix toolbar tinting on API < 21
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
@@ -280,6 +286,29 @@ public class MainActivity extends AppCompatActivity {
             .setIcon(R.drawable.ic_warning_24dp)
             .setNegativeButton(R.string.ignore, null)
             .show();
+    }
+
+    private void applyWindowInsets() {
+        final int appBarTop = mAppBar.getPaddingTop();
+        final int bottomNavBottom = mBottomNavBar.getPaddingBottom();
+        final int fabBottom = mFloatingActionButton.getPaddingBottom();
+
+        ViewCompat.setOnApplyWindowInsetsListener(mAppBar, (view, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            view.setPadding(view.getPaddingLeft(), appBarTop + bars.top, view.getPaddingRight(), view.getPaddingBottom());
+            return insets;
+        });
+        ViewCompat.setOnApplyWindowInsetsListener(mBottomNavBar, (view, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            view.setPadding(view.getPaddingLeft(), view.getPaddingTop(), view.getPaddingRight(), bottomNavBottom + bars.bottom);
+            return insets;
+        });
+        ViewCompat.setOnApplyWindowInsetsListener(mFloatingActionButton, (view, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            view.setPadding(view.getPaddingLeft(), view.getPaddingTop(), view.getPaddingRight(), fabBottom + bars.bottom);
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(mAppBar);
     }
 
     @NonNull

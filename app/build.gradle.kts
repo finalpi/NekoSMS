@@ -19,13 +19,17 @@ dependencies {
 
 android {
     namespace = "com.crossbowffs.nekosms"
-    compileSdk = 34
+    compileSdk = 35
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     defaultConfig {
-        versionCode = 44
-        versionName = "0.24.0-dev"
-        minSdk = 19
-        targetSdk = 34
+        versionCode = 45
+        versionName = "0.25.0"
+        minSdk = 26
+        targetSdk = 35
         resourceConfigurations.addAll(listOf("en", "zh-rCN", "ru"))
         buildConfigField("int", "MODULE_VERSION", "19")
         buildConfigField("int", "DATABASE_VERSION", "12")

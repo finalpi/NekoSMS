@@ -12,6 +12,10 @@ import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import androidx.viewpager2.adapter.FragmentStateAdapter;
@@ -70,12 +74,14 @@ public class FilterEditorActivity extends AppCompatActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
         setContentView(R.layout.activity_filter_editor);
         mAppBar = findViewById(R.id.appbar);
         mToolbar = findViewById(R.id.toolbar);
         mTabLayout = findViewById(R.id.filter_editor_tablayout);
         mViewPager = findViewById(R.id.filter_editor_viewpager);
         setSupportActionBar(mToolbar);
+        applyWindowInsets();
 
         // HACK: Fix toolbar tinting on API < 21
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
@@ -256,5 +262,16 @@ public class FilterEditorActivity extends AppCompatActivity {
             .setIcon(R.drawable.ic_warning_24dp)
             .setPositiveButton(R.string.ok, null)
             .show();
+    }
+
+    private void applyWindowInsets() {
+        final int appBarTop = mAppBar.getPaddingTop();
+
+        ViewCompat.setOnApplyWindowInsetsListener(mAppBar, (view, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            view.setPadding(view.getPaddingLeft(), appBarTop + bars.top, view.getPaddingRight(), view.getPaddingBottom());
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(mAppBar);
     }
 }
